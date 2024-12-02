@@ -1,9 +1,11 @@
-function plotPETH(PETH)
+function plotPETH(PETH, scores, neurons, trialEnd)
 %
 % Plot the percentage of neurons that are modulated by time and/or movement velocity. 
 %
 % Input: 
-%       PETH:               Peri-event time histogram. Each row is a neuron's average PETH.
+%       PETH:               Z-scored peri-event time histogram. Each row is a neuron's average z-scored PETH.
+%       scores:             PCA scores for each neuron.
+%       neurons:            Logical to indicate which neurons to plot.
 %
 % Output: 
 %       figure
@@ -11,27 +13,23 @@ function plotPETH(PETH)
     
     % Parameters
     intervalStart = -4;
-    intervalEnd = 22;
-    binSize = 0.15;
+    intervalEnd = trialEnd + 4;
+    binSize = 0.2;
     intervalBins = intervalStart : binSize : intervalEnd;
     trialStart = 0;
-    trialEnd = 18;
     PCtoSort = 1; 
 
     % Run a PCA.
-    timeInterval = find(intervalBins > (trialStart - binSize) & intervalBins < (trialEnd + binSize));
-    intervalPETH = PETH(:, timeInterval); 
-    pethInterval = intervalBins(timeInterval);
-    zPETH = zscore(intervalPETH')';
-    warning off;
-    [COEFF, SCORE, LATENT, TSQUARED, EXPLAINED] = pca(zPETH);
-    warning on;
+    timeInterval = intervalBins > (trialStart - binSize) & intervalBins < (trialEnd + binSize);
+    plotInterval = intervalBins(timeInterval);
        
     % Plot
-    [~,sortKey] = sort(SCORE(:, PCtoSort));  % For sorting by PCA
-    imagesc(pethInterval, [], zPETH(sortKey,:), [-3 3]); 
+    [~, sortKey] = sort(scores(neurons, PCtoSort));  % Sort the data to plot by score in PC1.
+    PETHtoPlot = PETH(neurons, :);
+    imagesc(plotInterval, [], PETHtoPlot(sortKey,:), [-3 3]); 
     xlabel('Time from Trial Start (s)'); 
     ylabel('Neuron #')
-    set(gca, 'xtick', [0 6 18], 'ytick', [1 size(zPETH,1)]);
+    %xticks([0 6 18]);
+    yticks([1 size(PETHtoPlot,1)]);
     colorbar;
     colormap('jet');

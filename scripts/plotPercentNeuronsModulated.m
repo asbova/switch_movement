@@ -9,20 +9,39 @@ function plotPercentNeuronsModulated(glmStructure)
 %       figure
 
     
-    plotColors = {[0 102 204] ./ 255; [153 0 76] ./ 255; [204 153 255] ./ 255};
-    
-    rampingNeurons = find(cellfun(@(x) x < 0.05, {glmStructure.pTime}));
-    motorNeurons = find(cellfun(@(x) x < 0.05, {glmStructure.pVelocity}));
-    rampAndMotorNeurons = intersect(rampingNeurons, motorNeurons);
+    plotColors = {[0 102 204] ./ 255; [153 0 76] ./ 255};
+    plotColors = repmat(plotColors, 5, 1);
+
+    for iGroup = 1 : 2
+        if iGroup == 1
+            currentNeurons = find(cellfun(@(x) all(x == 'DMS'), {glmStructure.group}));
+        else
+            currentNeurons = find(cellfun(@(x) all(x == 'PFC'), {glmStructure.group}));
+        end
+        rampingNeurons = find(cellfun(@(x) x < 0.05, {glmStructure(currentNeurons).pTimeFDR}));
+        motorNeurons = find(cellfun(@(x) x < 0.05, {glmStructure(currentNeurons).pVelocityFDR}));        
+        rampAndMotorNeurons = intersect(rampingNeurons, motorNeurons);
+        responseNeurons = find(cellfun(@(x) x < 0.05, {glmStructure(currentNeurons).pResponseFDR}));
+        cuesNeurons = find(cellfun(@(x) x < 0.05, {glmStructure(currentNeurons).pCuesFDR}));
+
+        nTotalNeurons(iGroup) = length(currentNeurons);
+        nRampingNeurons(iGroup) = length(rampingNeurons);
+        nMotorNeurons(iGroup) = length(motorNeurons);
+        nRampAndMotorNeurons(iGroup) = length(rampAndMotorNeurons);
+        nResponseNeurons(iGroup) = length(responseNeurons);
+        nCuesNeurons(iGroup) = length(cuesNeurons);
+    end
     
     hold on;
-    b = bar(1:3, ([length(rampingNeurons), length(motorNeurons), length(rampAndMotorNeurons)] ./ length(glmStructure))*100);
+    b = bar(1:10, ([nRampingNeurons(1), nRampingNeurons(2), nMotorNeurons(1), nMotorNeurons(2), nRampAndMotorNeurons(1), nRampAndMotorNeurons(2), ...
+        nResponseNeurons(1), nResponseNeurons(2), nCuesNeurons(1), nCuesNeurons(2)] ./ repmat(nTotalNeurons,1,5))*100);
     b.FaceColor = 'flat';
     b.EdgeColor = 'none';
-    for iBar = 1 : 3
+    for iBar = 1 : 10
         b.CData(iBar,:) = plotColors{iBar};
     end
     ylabel('Modulated (%)');
-    xticks(1 : 3);
-    xticklabels({'Time', 'Velocity', 'Both'});
-    %set(gca, 'FontSize', 14);
+    xticks(1.5 : 2 : 10.5);
+    xticklabels({'Time', 'Velocity', 'Both', 'Response', 'Cues'});
+    %legend('DMS', 'PFC')
+    set(gca, 'FontSize', 12);

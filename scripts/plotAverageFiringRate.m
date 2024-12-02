@@ -43,9 +43,9 @@ function plotAverageFiringRate(periEventSpike, interval, plotColor)
     xlabel('Time from Trial Start (s)');
     
     % temporary
-    xline(0, 'Color', 'r', 'LineStyle', '--')
-    xline(6, 'Color', 'r', 'LineStyle', '--')
-    xline(18, 'Color', 'r', 'LineStyle', '--')   
+    xline(0, 'Color', 'k', 'LineStyle', '--')
+    xline(6, 'Color', 'k', 'LineStyle', '--')
+    xline(18, 'Color', 'k', 'LineStyle', '--')   
     
     hold off
 

@@ -15,22 +15,26 @@ function [glmStructure, PETH, neurons] = runGLM(ephysData)
     intervalEnd = 22;   % Use for peSpike.
     trialStart = 0;
     trialEnd = 18;      % Use for the actual GLME to look at ramp only within trial.
-    binSize = 0.15;     % seconds
+    binSize = 0.2;     % seconds
     intervalBins = intervalStart : binSize : intervalEnd;
     trialBins = trialStart : binSize : trialEnd;
     timep = (trialStart + binSize : binSize : trialEnd)';
     binWidth = 1.0;     % For smoothing for plotting.
 
-    % Compile neurons from all sessions into one structure.
+    % Compile neurons from all sessions with DLC data into one structure.
     neurons = [];
     nSessions = length(ephysData);
-    for iSession = 4 : nSessions
-        if all(ephysData(iSession).group == 'DMS')  % If the recording is from the DMS, extract only the MSNs.
+    for iSession = 1 : nSessions
+        if all(ephysData(iSession).group == 'DMSswitch') & ~isempty(ephysData(iSession).dlc) % If the recording is from the DMS, extract only the MSNs.
             currentNeurons = ephysData(iSession).neurons;
             averageFiringRate = [currentNeurons.averageFiringRate];
             neurons = [neurons, currentNeurons(averageFiringRate > 0.5 & averageFiringRate < 20 & strcmp({currentNeurons.type},'MSN'))];
-        else
-            neurons = [neurons, ephysData(iSession).neurons];
+        elseif all(ephysData(iSession).group == 'PFCswitch') & ~isempty(ephysData(iSession).dlc)
+            currentNeurons = ephysData(iSession).neurons;
+            for jNeuron = 1 : length(currentNeurons)
+                currentNeurons(jNeuron).type = 'NaN';
+            end
+            neurons = [neurons, currentNeurons];
         end
     end
     fprintf('\nTotal number of neurons for analysis: %d\n', length(neurons));
@@ -38,16 +42,21 @@ function [glmStructure, PETH, neurons] = runGLM(ephysData)
     % Run the GLM.
     glmStructure = [];
     for iNeuron = 1 : length(neurons)
-
-        % Velocity
+        
         sessionName = extractBefore(neurons(iNeuron).filename, '_rough');
         sessionRow = find(contains({ephysData.pl2FilePathway}, sessionName));
+        if isempty(ephysData(sessionRow).dlc)
+            continue;
+        end
+        glmStructure(iNeuron).session = sessionName;
+        glmStructure(iNeuron).neuron = neurons(iNeuron).name;
+
+        % Collect velocity data
         behaviorData = ephysData(sessionRow).mpcTrialData;  % Identify the long trials that are correct
         longTrials = find(cellfun(@(x) x == 18000, {behaviorData.programmedDuration}));
         correctTrials = find(cellfun(@(x) ~isempty(x), {behaviorData.reward_inTrial}));
         correctLongTrials = ismember(longTrials, correctTrials);
         velocityData = ephysData(sessionRow).dlc.velocity.LongTrials(correctLongTrials,:);
-        velocityData = velocityData(:, 241 : 1319);
 
         % Bin average velocity 
         frameRate = ephysData(sessionRow).dlc.frameRate;
@@ -57,7 +66,20 @@ function [glmStructure, PETH, neurons] = runGLM(ephysData)
         for iTrial = 1 : size(velocityData,1)
             binnedVelocity(1:nBins-1,iTrial) = arrayfun(@(x) mean(velocityData(iTrial, x:x+framesPerBin-1)), 1:framesPerBin:length(velocityData)-framesPerBin+1)';
         end
-        binnedVelocity = reshape(binnedVelocity, [], 1);
+        binnedVelocity = binnedVelocity(21:110, :);
+        binnedVelocityTable = reshape(binnedVelocity, [], 1);
+
+        % Trial start cues
+        trialStartBinary = zeros(length(timep), sum(correctLongTrials));
+        trialStartBinary(1, :) = 1;
+        trialStartBinaryTable = reshape(trialStartBinary(1:end,:), [], 1);
+
+        % Nosepoke responses
+        allResponses = [neurons(iNeuron).trialSpecificEvents.shortResponse; neurons(iNeuron).trialSpecificEvents.longResponse];
+        periEventResponse = peSpike(allResponses, neurons(iNeuron).trialSpecificEvents.correctLongTrialCuesOn, intervalBins);
+        responseTrial = double(periEventResponse);
+        histogramResponseTrial = histc(responseTrial', trialBins);
+        histogramResponseTrialTable = reshape(histogramResponseTrial(1:end-1,:), [], 1);
 
         % Firing Rate
         clear *periEventSpike*
@@ -65,17 +87,46 @@ function [glmStructure, PETH, neurons] = runGLM(ephysData)
         PETH(iNeuron, :) = gksmooth(periEventSpike, intervalBins, binWidth);  % Smooth for PCA
         spikeTrial = double(periEventSpike);
         histogramSpikeTrial = histc(spikeTrial', trialBins);
-        histogramSpikeTrial = reshape(histogramSpikeTrial(1 : end-1, :), [], 1);
+        histogramSpikeTrialTable = reshape(histogramSpikeTrial(1:end-1, :), [], 1);
 
         % GLME with time and velocity as independent variables, firing rate as dependent variable.
         trialTime = repmat(timep, size(spikeTrial, 1), 1);
-        T = table(trialTime, histogramSpikeTrial, binnedVelocity, 'VariableNames', {'Time', 'FiringRate', 'Velocity'});
-        lmNeuron = fitglme(T, 'FiringRate~Time + Velocity');
+        T = table(trialTime, histogramSpikeTrialTable, binnedVelocityTable, histogramResponseTrialTable, trialStartBinaryTable,...
+            'VariableNames', {'Time', 'FiringRate', 'Velocity', 'Response', 'Cues'});
+        lmNeuron = fitglme(T, 'FiringRate~Time + Velocity + Response + Cues');
         lmNeuronAnova = anova(lmNeuron);
         glmStructure(iNeuron).pTime = [lmNeuronAnova{2,5}];
         glmStructure(iNeuron).pVelocity = [lmNeuronAnova{3,5}];
+        glmStructure(iNeuron).pResponse = [lmNeuronAnova{4,5}];
+        glmStructure(iNeuron).pCues = [lmNeuronAnova{5,5}];
         glmStructure(iNeuron).LMtime = lmNeuron;
         a = fixedEffects(lmNeuron); 
         glmStructure(iNeuron).timeSlope = a(2);
         glmStructure(iNeuron).motorSlope = a(3);
+
+        % Run GLME on 0-6seconds
+        sixIndex = timep < 6.2;
+        trialTime = repmat(timep(sixIndex), size(spikeTrial, 1), 1);
+        histogramSpikeTrialTable = reshape(histogramSpikeTrial(sixIndex, :), [], 1);
+        binnedVelocityTable = reshape(binnedVelocity(sixIndex, :), [], 1);
+        histogramResponseTrialTable = reshape(histogramResponseTrial(sixIndex, :), [], 1);
+        trialStartBinaryTable = reshape(trialStartBinary(sixIndex, :), [], 1);
+        T = table(trialTime, histogramSpikeTrialTable, binnedVelocityTable, histogramResponseTrialTable, trialStartBinaryTable,...
+            'VariableNames', {'Time', 'FiringRate', 'Velocity', 'Response', 'Cues'});
+        lmNeuron = fitglme(T, 'FiringRate~Time + Velocity + Response + Cues');
+        lmNeuronAnova = anova(lmNeuron);
+        glmStructure(iNeuron).pTimeSix = [lmNeuronAnova{2,5}];
+    end
+
+    % Adjust p-values due to false discovery rate.
+    fdrInput = [[glmStructure.pTime], [glmStructure.pVelocity], [glmStructure.pResponse], [glmStructure.pCues], [glmStructure.pTimeSix]];
+    [~, ~, ~, adjustedP] = fdr_bh(fdrInput);
+    nIndependentVar = size(fdrInput,2) / length(glmStructure);
+    pValuesFDR = reshape(adjustedP, [], nIndependentVar);
+    for iNeuron = 1 : length(glmStructure)
+        glmStructure(iNeuron).pTimeFDR = pValuesFDR(iNeuron, 1);
+        glmStructure(iNeuron).pVelocityFDR = pValuesFDR(iNeuron, 2);
+        glmStructure(iNeuron).pResponseFDR = pValuesFDR(iNeuron, 3);
+        glmStructure(iNeuron).pCuesFDR = pValuesFDR(iNeuron, 4);
+        glmStructure(iNeuron).pTimeSixFDR = pValuesFDR(iNeuron, 5);
     end
